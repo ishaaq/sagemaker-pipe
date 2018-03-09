@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
+
 from pathlib import Path
 from urllib.parse import urlparse
 import argparse
+import boto3
 import errno
+import gzip
 import itertools
+import logging
 import os
 import shutil
-import logging
-import boto3
 
 
 def run(args):
@@ -15,6 +17,7 @@ def run(args):
     dest = args.dest
     channel = args.channel
     print(f'Pipe from src: {src} to dest: {dest} for channel: {channel}')
+
     if src.startswith("s3://"):
         s3_uri = urlparse(src)
         bucket_str = s3_uri.netloc
@@ -23,54 +26,73 @@ def run(args):
         s3 = boto3.resource('s3')
         bucket = s3.Bucket(bucket_str)
 
-        def runner(fifo):
-            s3_epoch_runner(bucket, prefix, fifo)
+        def src_retriever(sink):
+            s3_retriever(bucket, prefix, sink)
     else:
-        def runner(fifo):
-            local_epoch_runner(src, fifo)
+        def src_retriever(sink):
+            local_retriever(src, sink)
 
-    run_pipe(dest, channel, runner)
+    if args.gunzip:
+        def unzipper(sink):
+            tmp_path = Path(dest, '.' + channel + '.tmp')
+            gunzip(src_retriever, tmp_path, sink)
+            tmp_path.unlink()
+        run_pipe(channel, unzipper, dest)
+    else:
+        run_pipe(channel, src_retriever, dest)
 
 
-def s3_epoch_runner(bucket, prefix, fifo):
+def s3_retriever(bucket, prefix, sink):
     for obj_summary in bucket.objects.filter(Prefix=prefix):
         logging.debug(f'streaming s3://{bucket.name}/{obj_summary.key}')
-        bucket.download_fileobj(obj_summary.key, fifo)
+        bucket.download_fileobj(obj_summary.key, sink)
 
 
-def local_epoch_runner(src_dir, fifo):
-    for root, dirs, files in os.walk(src_dir):
-        logging.debug(f'file list: {files}')
-        for file in files:
-            src_path = Path(root, file)
-            logging.debug(f'streaming file: {src_path}')
-            if src_path.is_file():   # ignore special files
-                with src_path.open("br") as src:
-                    shutil.copyfileobj(src, fifo)
+def local_retriever(src, sink):
+    if os.path.isfile(src):
+        logging.debug(f'streaming file: {src}')
+        with open(src, 'rb') as src:
+            shutil.copyfileobj(src, sink)
+    else:
+        for root, dirs, files in os.walk(src):
+            logging.debug(f'file list: {files}')
+            for file in files:
+                src_path = Path(root, file)
+                logging.debug(f'streaming file: {src_path}')
+                if src_path.is_file():   # ignore special files
+                    with src_path.open('rb') as src:
+                        shutil.copyfileobj(src, sink)
 
 
-def run_pipe(input_dir, channel, epoch_runner):
+def gunzip(src_retriever, tmp_path, sink):
+    with open(tmp_path, 'wb') as tmp:
+        src_retriever(tmp)
+    with gzip.open(tmp_path, 'rb') as inflated:
+        shutil.copyfileobj(inflated, sink)
+
+
+def run_pipe(channel, src_retriever, dest):
     for epoch in itertools.count():
         print(f'Running epoch: {epoch}')
         # delete previous epoch's fifo if it exists:
-        delete_fifo(input_dir, channel, epoch - 1)
+        delete_fifo(dest, channel, epoch - 1)
 
         try:
-            fifo_path = create_fifo(input_dir, channel, epoch)
-            with fifo_path.open(mode='bw', buffering=0) as fifo:
-                epoch_runner(fifo)
+            fifo_pth = create_fifo(dest, channel, epoch)
+            with fifo_pth.open(mode='bw', buffering=0) as fifo:
+                src_retriever(fifo)
         finally:
-            delete_fifo(input_dir, channel, epoch)
+            delete_fifo(dest, channel, epoch)
     print(f'Completed pipe for channel: {channel}')
 
 
-def fifo_path(input_dir, channel, epoch):
-    return Path(input_dir, channel + '_' + str(epoch))
+def fifo_path(dest, channel, epoch):
+    return Path(dest, channel + '_' + str(epoch))
 
 
-def delete_fifo(input_dir, channel, epoch):
+def delete_fifo(dest, channel, epoch):
     try:
-        path = fifo_path(input_dir, channel, epoch)
+        path = fifo_path(dest, channel, epoch)
         path.unlink()
     except OSError as e:
         if e.errno != errno.ENOENT:
@@ -79,8 +101,8 @@ def delete_fifo(input_dir, channel, epoch):
             raise
 
 
-def create_fifo(input_dir, channel, epoch):
-    path = Path(fifo_path(input_dir, channel, epoch))
+def create_fifo(dest, channel, epoch):
+    path = Path(fifo_path(dest, channel, epoch))
     logging.debug(f'Creating fifo: {path}')
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.is_fifo():
@@ -140,18 +162,15 @@ https://boto3.readthedocs.io/en/latest/guide/configuration.html#aws-config-file
     args, unknown = parser.parse_known_args()
 
     if unknown:
-        logging.warn(f'Ignoring unknown arguments: {unknown}')
+        logging.warning(f'Ignoring unknown arguments: {unknown}')
     logging.debug(f'Training with configuration: {args}')
 
     if args.debug:
         logging.basicConfig(format='%(levelname)s: %(message)s',
                             level=logging.DEBUG)
 
-    if args.gunzip:
-        logging.warn('gzip inflation not implemented yet - ignoring!')
-
     if args.recordio:
-        logging.warn('recordio wrapping not implemented yet - ignoring!')
+        logging.warning('recordio wrapping not implemented yet - ignoring!')
 
     run(args)
 
