@@ -72,12 +72,13 @@ OR via a shared credentials file:
 https://boto3.readthedocs.io/en/latest/guide/configuration.html#aws-config-file
 ```
 
-Note that the tool runs with an infinite loop will never exit normally, you wil have to 
+Note that the tool runs with an infinite loop will never exit normally, you wil have to
 stop it manually after your algorithm completes.
 
 If you PIPE-mode algorithm needs to stream from multiple channels simply run multiple
-instances of the tool with each pointing to different sources and differing channel names
-but the same destination.
+instances of the tool each with a unique `CHANNEL_NAME` pointing to a different `SRC`
+but the same `DEST`.
 
-Finally run your PIPE-mode algorithm pointing it at `DEST` where it should see a sequence
-of FIFO files matching the format `<CHANNEL>_<epoch_num>`.
+Finally, fire up your PIPE-mode algorithm pointing it at `DEST` where it should see a
+sequence of FIFO files matching the format `<CHANNEL_NAME>_<epoch_num>` that it should
+be able to process.
