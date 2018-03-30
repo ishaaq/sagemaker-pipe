@@ -89,6 +89,12 @@ def run_pipe(channel, src_retriever, dest):
             fifo_pth = create_fifo(dest, channel, epoch)
             with open(fifo_pth, mode='bw', buffering=0) as fifo:
                 src_retriever(fifo)
+        except IOError as e:
+            if e.errno == errno.EPIPE:
+                print("Client closed current epoch's pipe before reaching EOF. "
+                      "Continuing with next epoch...")
+            else:
+                raise
         finally:
             delete_fifo(dest, channel, epoch)
     print('Completed pipe for channel: {}'.format(channel))
