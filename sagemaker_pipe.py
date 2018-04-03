@@ -67,7 +67,7 @@ def local_retriever(src, sink):
             for file in files:
                 src_path = root + '/' + file
                 logging.debug('streaming file: {}'.format(src_path))
-                if os.path.isfile():   # ignore special files
+                if os.path.isfile(src_path):   # ignore special files
                     with open(src_path, 'rb') as src:
                         shutil.copyfileobj(src, sink)
 
