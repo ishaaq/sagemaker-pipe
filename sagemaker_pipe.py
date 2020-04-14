@@ -191,13 +191,15 @@ https://boto3.readthedocs.io/en/latest/guide/configuration.html#aws-config-file
                         streamed to')
     args, unknown = parser.parse_known_args()
 
-    if unknown:
-        logging.warning('Ignoring unknown arguments: {}'.format(unknown))
-    logging.debug('Training with configuration: {}'.format(args))
-
     if args.debug:
         logging.basicConfig(format='%(levelname)s: %(message)s',
                             level=logging.DEBUG)
+
+    logging.debug('Training with configuration: {}'.format(args))
+
+    if unknown:
+        logging.warning('Ignoring unknown arguments: {}'.format(unknown))
+
 
     if args.recordio:
         logging.warning('recordio wrapping not implemented yet - ignoring!')
